@@ -66,6 +66,15 @@ pub enum DispatchResult<R> {
     Err(JsonResponse),
 }
 
+pub struct ReactorRemoteControl {
+    _destructor: fsync::oneshot::Sender<()>,
+    handle: Remote,
+}
+impl ReactorRemoteControl {
+    pub fn ref_remote(&self) -> &Remote {
+        &self.handle
+    }
+}
 pub struct ReactorControl {
     _destructor: fsync::oneshot::Sender<()>,
     handle: Handle,
@@ -79,6 +88,12 @@ impl ReactorControl {
     }
     pub fn ref_handle(&self) -> &Handle {
         &self.handle
+    }
+    pub fn into_remote(self) -> ReactorRemoteControl {
+        ReactorRemoteControl {
+            _destructor: self._destructor,
+            handle: self.handle.remote().clone(),
+        }
     }
 }
 
