@@ -133,7 +133,7 @@ pub trait RequestDispatcher: Clone + Sized + 'static {
     fn reactor_control(&mut self, _ctrl: ReactorControl) -> InitDestructor {
         InitDestructor::Ignore
     }
-    fn connection_error_reporter(&self, _error: hyper::Error) {}
+    fn connection_error_reporter(&self, _error: FrontendError) {}
     fn http_debug(&self) -> bool { false }
     fn http_log(&self, role: &String, http: &HttpVersion, method: &Method, uri: &Uri, _headers: &Headers, remote_addr: SocketAddr) {
         debug!("{} {:?} {:?} {:?} {}",role,http,method,uri,remote_addr);
@@ -193,7 +193,7 @@ impl FrontendBuilder {
                 Either::A(vs.pop().unwrap().for_each(move |conn| {
                     let dsp = dsp.clone();
                     info!("Incomming connection: {}",conn.remote());
-                    handle.spawn(conn.map_err(move |e| dsp.connection_error_reporter(e)));
+                    handle.spawn(conn.map_err(move |e| dsp.connection_error_reporter(FrontendError::Hyper(e))));
                     Ok(())
                 }))
             },
@@ -202,7 +202,7 @@ impl FrontendBuilder {
                 Either::B(vs.pop().unwrap().select(vs.pop().unwrap()).for_each(move |conn| {
                     let dsp = dsp.clone();
                     info!("Incomming connection: {}",conn.remote());
-                    handle.spawn(conn.map_err(move |e| dsp.connection_error_reporter(e)));
+                    handle.spawn(conn.map_err(move |e| dsp.connection_error_reporter(FrontendError::Hyper(e))));
                     Ok(())
                 }))
             },

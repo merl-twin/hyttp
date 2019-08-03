@@ -11,6 +11,10 @@ extern crate tokio_core;
 mod server;
 mod jresponse;
 
+pub use hyper::{
+    HttpVersion, Method, Uri, Headers,
+};
+
 pub use jresponse::{
     JsonResponse,
 };
