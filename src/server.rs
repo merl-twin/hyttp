@@ -100,17 +100,11 @@ pub enum DispatchResult<R> {
 
 pub struct ReactorControl {
     _destructor: fsync::oneshot::Sender<()>,
-    handle: Handle,
+    handle: Remote,
 }
 impl ReactorControl {
-    pub fn remote(&self) -> Remote {
-        self.handle.remote().clone()
-    }
-    pub fn handle(&self) -> Handle {
+    pub fn handle(&self) -> Remote {
         self.handle.clone()
-    }
-    pub fn ref_handle(&self) -> &Handle {
-        &self.handle
     }
 }
 
@@ -174,7 +168,7 @@ impl FrontendBuilder {
         let (tx,destructor) = fsync::oneshot::channel::<()>();
         let init_destructor = dispatcher.reactor_control(ReactorControl{
             _destructor: tx,
-            handle: core.handle(),
+            handle: core.handle().remote().clone(),
         });
         
         let mut vs = Vec::new();
@@ -283,7 +277,7 @@ impl<D> Service for Session<D>
     type Request = Request;
     type Response = Response;
     type Error = hyper::Error;
-    type Future = Box<Future<Item=Self::Response, Error=Self::Error>>;
+    type Future = Box<dyn Future<Item=Self::Response, Error=Self::Error>>;
 
     fn call(&self, req: Request) -> Self::Future {
         fn html_reply(s: String) -> Response {
