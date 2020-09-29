@@ -11,6 +11,8 @@ extern crate tokio_core;
 mod server;
 mod jresponse;
 
+pub mod qstring;
+
 pub use hyper::{
     HttpVersion, Method, Uri, Headers,
 };

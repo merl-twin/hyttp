@@ -23,8 +23,10 @@ use std::{
     sync::Arc,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     collections::BTreeMap,
+    boxed::Box,
 };
 use crate::jresponse::JsonResponse;
+use crate::qstring;
 
 pub struct HtmlSender(fsync::oneshot::Sender<String>);
 impl HtmlSender {
@@ -96,6 +98,11 @@ pub enum DispatchResult<R> {
     ChunkedOk(R),
     Html(R),
     Err(JsonResponse),
+}
+impl<R> From<qstring::UrlParseError> for DispatchResult<R> {
+    fn from(err: qstring::UrlParseError) -> DispatchResult<R> {
+        DispatchResult::Err(JsonResponse::internal_error(&format!("{:?}",err)))
+    }
 }
 
 pub struct ReactorControl {
@@ -283,7 +290,7 @@ impl<D> Service for Session<D>
     type Request = Request;
     type Response = Response;
     type Error = hyper::Error;
-    type Future = Box<Future<Item=Self::Response, Error=Self::Error>>;
+    type Future = Box<dyn Future<Item=Self::Response, Error=Self::Error>>;
 
     fn call(&self, req: Request) -> Self::Future {
         fn html_reply(s: String) -> Response {
