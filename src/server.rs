@@ -107,17 +107,11 @@ impl<R> From<qstring::UrlParseError> for DispatchResult<R> {
 
 pub struct ReactorControl {
     _destructor: fsync::oneshot::Sender<()>,
-    handle: Handle,
+    handle: Remote,
 }
 impl ReactorControl {
-    pub fn remote(&self) -> Remote {
-        self.handle.remote().clone()
-    }
-    pub fn handle(&self) -> Handle {
+    pub fn handle(&self) -> Remote {
         self.handle.clone()
-    }
-    pub fn ref_handle(&self) -> &Handle {
-        &self.handle
     }
 }
 
@@ -181,7 +175,7 @@ impl FrontendBuilder {
         let (tx,destructor) = fsync::oneshot::channel::<()>();
         let init_destructor = dispatcher.reactor_control(ReactorControl{
             _destructor: tx,
-            handle: core.handle(),
+            handle: core.handle().remote().clone(),
         });
         
         let mut vs = Vec::new();
