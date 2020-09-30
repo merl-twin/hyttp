@@ -6,6 +6,8 @@ use url::{
 use std::{
     str::Utf8Error,
     borrow::Cow,
+    collections::BTreeMap,
+    fmt::Debug,
 };
 use hyper::Uri;
 
@@ -55,7 +57,76 @@ impl  QueryString {
             key: key.to_string(),
         }
     }
+    pub fn into_map<'t>(&self) -> QueryMap {
+        let mut hash = BTreeMap::new();
+        for (k,v) in self.parsed.query_pairs() {
+            hash.entry(k.to_string()).or_insert(Value::None).push(v.to_string());            
+        }
+        hash
+    }
 }
+
+pub type QueryMap = BTreeMap<String,Value<String>>;
+
+#[derive(Debug)]
+pub enum Value<T> {
+    None,
+    One(T),
+    Vec(Vec<T>),
+}
+impl<T> Value<T> {
+    pub fn push(&mut self, value: T) {
+        let mut tmp = Value::None;
+        std::mem::swap(&mut tmp,self);
+        *self = match tmp {
+            Value::None => Value::One(value),
+            Value::One(v) => Value::Vec(vec![v,value]),
+            Value::Vec(mut v) => {
+                v.push(value);
+                Value::Vec(v)
+            },
+        };
+    }
+    pub fn try_map<Q,F,E>(&self, func: F) -> Result<Value<Q>,E>
+    where F: Fn(&T) -> Result<Q,E>,
+          E: Debug
+    {
+        Ok(match self {
+            Value::None => Value::None,
+            Value::One(v) => Value::One(func(v)?),
+            Value::Vec(vs) => Value::Vec({
+                let mut nv = Vec::with_capacity(vs.len());
+                for v in vs.iter() {
+                    nv.push(func(v)?);
+                }
+                nv
+            }),
+        })
+    }
+}
+
+/*
+impl<'t,T,Q> TryInto<Value<Q>> for &'t Value<T>
+where Q: TryFrom<&'t T>
+{
+    type Error = <Q as TryFrom<&'t T>>::Error;
+    
+    fn try_into(self) -> Result<Value<Q>,Self::Error>       
+    {
+        Ok(match self {
+            Value::None => Value::None,
+            Value::One(v) => Value::One(Q::try_from(v)?),
+            Value::Vec(vs) => Value::Vec({
+                let mut nv = Vec::with_capacity(vs.len());
+                for v in vs.iter() {
+                    nv.push(Q::try_from(v)?);
+                }
+                nv
+            }),
+        })
+    }
+}
+*/
 
 #[derive(Debug)]
 pub enum UrlParseError {
