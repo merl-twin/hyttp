@@ -37,15 +37,15 @@ pub enum JsonResponse {
     EmptyQuery,
     RequestTimeout,
     Ok(Value),
-    RawOk(Value), // raw JSON - kind of 'any' reply variant
     ChunkedOk(sync::mpsc::Receiver<Result<Chunk,hyper::Error>>),
+    Raw{ status: StatusCode, value: Value }, // raw JSON - kind of 'any' reply variant
 }
 impl JsonResponse {
     pub fn ok(value: Value) -> JsonResponse {
         JsonResponse::Ok(value)
     }
-    pub fn raw(value: Value) -> JsonResponse {
-        JsonResponse::RawOk(value)
+    pub fn raw(status: StatusCode, value: Value) -> JsonResponse {
+        JsonResponse::Raw{ status, value }
     }
     pub fn internal_error(er: &str) -> JsonResponse {
         match serde_json::to_value(er) {
@@ -69,8 +69,8 @@ impl JsonResponse {
             JsonResponse::RequestTimeout => Reply::new("Request Timeout".to_string(),None),
             JsonResponse::InternalServerError(v) => Reply::new("Internal Server Error".to_string(),v),
             JsonResponse::Ok(v) => Reply::new("Ok".to_string(),Some(v)),
-            JsonResponse::RawOk(v) => return Ok(ReplyValue::Value(v)),
             JsonResponse::ChunkedOk(..) => return Err(()),
+            JsonResponse::Raw{ value, .. }  => return Ok(ReplyValue::Value(value)),
         }))
     }
     fn status(&self) -> StatusCode {
@@ -83,8 +83,8 @@ impl JsonResponse {
             JsonResponse::RequestTimeout => StatusCode::RequestTimeout,
             JsonResponse::InternalServerError(..) => StatusCode::InternalServerError,
             JsonResponse::Ok(..) |
-            JsonResponse::RawOk(..) |
             JsonResponse::ChunkedOk(..) => StatusCode::Ok,
+            JsonResponse::Raw{ status, .. } => status,
         }
     }
     pub fn to_response(self) -> Response {
@@ -107,7 +107,7 @@ impl JsonResponse {
             JsonResponse::RequestTimeout | 
             JsonResponse::InternalServerError(..) |
             JsonResponse::Ok(..) |
-            JsonResponse::RawOk(..) => {
+            JsonResponse::Raw{..} => {
                 if let Ok(rep_val) = self.reply_value() {
                     match match &rep_val {
                         ReplyValue::Reply(rep) => serde_json::to_string(rep),
