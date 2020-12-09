@@ -22,6 +22,11 @@ impl Reply {
     }
 }
 
+enum ReplyValue {
+    Reply(Reply),
+    Value(Value),
+}
+
 #[derive(Debug)]
 pub enum JsonResponse {
     NotFound,
@@ -32,9 +37,16 @@ pub enum JsonResponse {
     EmptyQuery,
     RequestTimeout,
     Ok(Value),
+    RawOk(Value), // raw JSON - kind of 'any' reply variant
     ChunkedOk(sync::mpsc::Receiver<Result<Chunk,hyper::Error>>),
 }
 impl JsonResponse {
+    pub fn ok(value: Value) -> JsonResponse {
+        JsonResponse::Ok(value)
+    }
+    pub fn raw(value: Value) -> JsonResponse {
+        JsonResponse::RawOk(value)
+    }
     pub fn internal_error(er: &str) -> JsonResponse {
         match serde_json::to_value(er) {
             Ok(v) => JsonResponse::InternalServerError(Some(v)),
@@ -47,8 +59,8 @@ impl JsonResponse {
     pub fn empty_error() -> JsonResponse {
         JsonResponse::InternalServerError(None)
     }
-    fn reply(self) -> Result<Reply,()> {
-        Ok(match self {
+    fn reply_value(self) -> Result<ReplyValue,()> {
+        Ok(ReplyValue::Reply(match self {
             JsonResponse::NotFound =>  Reply::new("Not Found".to_string(),None),
             JsonResponse::MethodNotAllowed => Reply::new("Method Not Allowed".to_string(),None),
             JsonResponse::BadRequest => Reply::new("Bad Request".to_string(),None),
@@ -57,8 +69,9 @@ impl JsonResponse {
             JsonResponse::RequestTimeout => Reply::new("Request Timeout".to_string(),None),
             JsonResponse::InternalServerError(v) => Reply::new("Internal Server Error".to_string(),v),
             JsonResponse::Ok(v) => Reply::new("Ok".to_string(),Some(v)),
+            JsonResponse::RawOk(v) => return Ok(ReplyValue::Value(v)),
             JsonResponse::ChunkedOk(..) => return Err(()),
-        })
+        }))
     }
     fn status(&self) -> StatusCode {
         match *self {
@@ -70,6 +83,7 @@ impl JsonResponse {
             JsonResponse::RequestTimeout => StatusCode::RequestTimeout,
             JsonResponse::InternalServerError(..) => StatusCode::InternalServerError,
             JsonResponse::Ok(..) |
+            JsonResponse::RawOk(..) |
             JsonResponse::ChunkedOk(..) => StatusCode::Ok,
         }
     }
@@ -92,9 +106,13 @@ impl JsonResponse {
             JsonResponse::EmptyQuery |
             JsonResponse::RequestTimeout | 
             JsonResponse::InternalServerError(..) |
-            JsonResponse::Ok(..) => {
-                if let Ok(rep) = self.reply() {
-                    match serde_json::to_string(&rep) {
+            JsonResponse::Ok(..) |
+            JsonResponse::RawOk(..) => {
+                if let Ok(rep_val) = self.reply_value() {
+                    match match &rep_val {
+                        ReplyValue::Reply(rep) => serde_json::to_string(rep),
+                        ReplyValue::Value(val) => serde_json::to_string(val),
+                    } {
                         Ok(json) => {
                             debug!("Size: {}KB",json.len()/1024);
                             return Response::new()
