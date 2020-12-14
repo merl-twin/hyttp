@@ -1,12 +1,11 @@
-use futures::sync;
-
-use log::{debug,error};
+use log::{debug,error,warn};
 use serde::{Serialize,Deserialize};
 
-use hyper;
-use hyper::header::{ContentLength,ContentType};
-use hyper::server::Response;
-use hyper::{Chunk,StatusCode};
+use hyper::{
+    header::{CONTENT_LENGTH,CONTENT_TYPE},
+    Response, Body,
+    StatusCode,
+};
 
 use serde_json::{self,Value};
 
@@ -40,7 +39,7 @@ pub enum JsonResponse {
     EmptyQuery,
     RequestTimeout,
     Ok(Value),
-    ChunkedOk(sync::mpsc::Receiver<Result<Chunk,hyper::Error>>),
+    ChunkedOk(Body),
     Raw{ status: StatusCode, value: Value }, // raw JSON - kind of 'any' reply variant
 }
 impl JsonResponse {
@@ -78,26 +77,32 @@ impl JsonResponse {
     }
     fn status(&self) -> StatusCode {
         match *self {
-            JsonResponse::NotFound => StatusCode::NotFound,
-            JsonResponse::MethodNotAllowed => StatusCode::MethodNotAllowed,
-            JsonResponse::TooManyRequests => StatusCode::TooManyRequests,
+            JsonResponse::NotFound => StatusCode::NOT_FOUND,
+            JsonResponse::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
+            JsonResponse::TooManyRequests => StatusCode::TOO_MANY_REQUESTS,
             JsonResponse::BadRequest | 
-            JsonResponse::EmptyQuery => StatusCode::BadRequest,
-            JsonResponse::RequestTimeout => StatusCode::RequestTimeout,
-            JsonResponse::InternalServerError(..) => StatusCode::InternalServerError,
+            JsonResponse::EmptyQuery => StatusCode::BAD_REQUEST,
+            JsonResponse::RequestTimeout => StatusCode::REQUEST_TIMEOUT,
+            JsonResponse::InternalServerError(..) => StatusCode::INTERNAL_SERVER_ERROR,
             JsonResponse::Ok(..) |
-            JsonResponse::ChunkedOk(..) => StatusCode::Ok,
+            JsonResponse::ChunkedOk(..) => StatusCode::OK,
             JsonResponse::Raw{ status, .. } => status,
         }
     }
-    pub fn to_response(self) -> Response {
-        fn error() -> Response {
+    pub fn to_response(self) -> Response<Body> {
+        fn error() -> Response<Body> {
             let json = "{ \"status\": \"Internal Server Error\" }";
-            Response::new()
-                .with_status(StatusCode::InternalServerError)
-                .with_header(ContentType(hyper::mime::APPLICATION_JSON))
-                .with_header(ContentLength(json.len() as u64))
-                .with_body(json)
+            Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .header(CONTENT_TYPE,mime::APPLICATION_JSON.as_ref())
+                .header(CONTENT_LENGTH,json.len() as u64)
+                .body(Body::from(json))
+                .unwrap_or({
+                    warn!("Error generating response (json-error)");
+                    let mut response = Response::new(Body::empty());
+                    *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+                    response
+                })
         }
         
         let status = self.status();
@@ -118,28 +123,40 @@ impl JsonResponse {
                     } {
                         Ok(json) => {
                             debug!("Size: {}KB",json.len()/1024);
-                            return Response::new()
-                                .with_status(status)
-                                .with_header(ContentType(hyper::mime::APPLICATION_JSON))
-                                .with_header(ContentLength(json.len() as u64))
-                                .with_body(json);
+                            return Response::builder()
+                                .status(status)
+                                .header(CONTENT_TYPE,mime::APPLICATION_JSON.as_ref())
+                                .header(CONTENT_LENGTH,json.len() as u64)
+                                .body(Body::from(json))
+                                .unwrap_or({
+                                    warn!("Error generating response (json)");
+                                    let mut response = Response::new(Body::empty());
+                                    *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+                                    response
+                                })
                         },
                         Err(e) => error!("Json error: {:?}",e),
                     }
                 }
                 error()
             },
-            JsonResponse::ChunkedOk(receiver) => {
-                Response::new()
-                    .with_status(status)
-                    .with_header(ContentType(hyper::mime::APPLICATION_OCTET_STREAM))
-                    .with_body(receiver)
+            JsonResponse::ChunkedOk(body) => {
+                Response::builder()
+                    .status(status)
+                    .header(CONTENT_TYPE,mime::APPLICATION_OCTET_STREAM.as_ref())
+                    .body(body)
+                    .unwrap_or({
+                        warn!("Error generating response (chunked-json)");
+                        let mut response = Response::new(Body::empty());
+                        *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+                        response
+                    })
             },
         }
     }
 }
-impl Into<Response> for JsonResponse {
-    fn into(self) -> Response {
+impl Into<Response<Body>> for JsonResponse {
+    fn into(self) -> Response<Body> {
         self.to_response()
     }
 }

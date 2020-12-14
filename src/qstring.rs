@@ -41,7 +41,10 @@ impl<'t,I> Iterator for QueryStringIterator<'t,I>
 }
 impl  QueryString {
     pub fn from_uri(uri: &Uri) -> Result<QueryString,UrlParseError> {
-        let decoded = percent_decode(uri.as_ref().as_bytes()).decode_utf8().map_err(UrlParseError::Utf8)?;
+        let decoded = match uri.clone().into_parts().path_and_query {
+            Some(pq) => percent_decode(pq.as_str().as_bytes()).decode_utf8().map_err(UrlParseError::Utf8)?.to_string(),
+            None => "/".to_string(),
+        };
         let parsed_data = std::rc::Rc::new(format!("http://localhost{}",decoded));           
         let parsed = Url::parse(&parsed_data).map_err(UrlParseError::Url)?;
         Ok(QueryString{

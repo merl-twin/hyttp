@@ -1,15 +1,16 @@
 [package]
 name = "http"
-version = "0.1.5"
+version = "0.2.0"
 authors = ["merl <merl.001.mia@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-hyper = { git = "https://github.com/merl-twin/hyper.git", branch = "0.11.27" }
+mime = "0.3"
+hyper = "0.13"
+futures = "0.3"
+tokio = { version = "0.2", features = ["tcp"] }
 
 url = "1.7"
-futures = "0.1"
-tokio-core = "0.1"
 log = "0.4"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
