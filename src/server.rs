@@ -4,7 +4,7 @@ use futures::{
     sync as fsync,
     Stream,
 };
-
+use log::{debug,info,error,warn};
 use hyper;
 pub use hyper::{
     Chunk,Method,Headers,Uri,HttpVersion,StatusCode,
