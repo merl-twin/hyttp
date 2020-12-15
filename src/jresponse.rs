@@ -97,7 +97,7 @@ impl JsonResponse {
                 .header(CONTENT_TYPE,mime::APPLICATION_JSON.as_ref())
                 .header(CONTENT_LENGTH,json.len() as u64)
                 .body(Body::from(json))
-                .unwrap_or({
+                .unwrap_or_else(|_|{
                     warn!("Error generating response (json-error)");
                     let mut response = Response::new(Body::empty());
                     *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
@@ -128,7 +128,7 @@ impl JsonResponse {
                                 .header(CONTENT_TYPE,mime::APPLICATION_JSON.as_ref())
                                 .header(CONTENT_LENGTH,json.len() as u64)
                                 .body(Body::from(json))
-                                .unwrap_or({
+                                .unwrap_or_else(|_| {
                                     warn!("Error generating response (json)");
                                     let mut response = Response::new(Body::empty());
                                     *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
@@ -145,7 +145,7 @@ impl JsonResponse {
                     .status(status)
                     .header(CONTENT_TYPE,mime::APPLICATION_OCTET_STREAM.as_ref())
                     .body(body)
-                    .unwrap_or({
+                    .unwrap_or_else(|_| {
                         warn!("Error generating response (chunked-json)");
                         let mut response = Response::new(Body::empty());
                         *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;

@@ -289,7 +289,7 @@ async fn service_call<D: RequestDispatcher>(role: String, remote_addr: SocketAdd
             .header(header::CONTENT_TYPE,mime::TEXT_HTML_UTF_8.as_ref())
             .header(header::CONTENT_LENGTH,s.len() as u64)
             .body(Body::from(s))
-            .unwrap_or({
+            .unwrap_or_else(|_|{
                 warn!("Error generating response (html)");
                 let mut response = Response::new(Body::empty());
                 *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
