@@ -298,7 +298,7 @@ async fn service_call<D: RequestDispatcher>(role: String, remote_addr: SocketAdd
     }
 
     
-    info!("Incomming connection: {}",remote_addr);
+    //info!("Incomming connection: {}",remote_addr);
     let (req_parts, req_body) = req.into_parts();
     let method = req_parts.method;
     let uri = req_parts.uri;
