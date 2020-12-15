@@ -150,7 +150,7 @@ pub struct ConnectionError {
     info: Option<ClientInfo>,
 }
 
-pub trait RequestDispatcher: Clone + Sized + 'static {
+pub trait RequestDispatcher: Clone + Send + Sized + 'static {
     type Request: Send;
     type Reply: ApiReply;
     
@@ -204,7 +204,7 @@ impl FrontendBuilder {
         self.addresses.entry(alias.to_string()).or_insert(addr);
         Ok(self)
     }
-    pub fn run<D: RequestDispatcher + Send>(self, mut dispatcher: D) -> Result<(),FrontendError> {
+    pub fn run<D: RequestDispatcher>(self, mut dispatcher: D) -> Result<(),FrontendError> {
         let mut executor = tokio::runtime::Runtime::new().map_err(FrontendError::Tokio)?;
         let (tx,destructor) = oneshot::channel::<()>();
         let init_destructor = dispatcher.reactor_control(ReactorControl{
@@ -230,7 +230,7 @@ impl FrontendBuilder {
         let handle = executor.handle().clone();
         executor.block_on(self.listen(dispatcher, process, handle).and_then(|()| future::err(FrontendError::UnexpectedTermination)))
     }
-    async fn listen<D: RequestDispatcher + Send>(self, dispatcher: D, process: Option<Arc<atomic::AtomicBool>>, handle: Handle) -> Result<(),FrontendError> {
+    async fn listen<D: RequestDispatcher>(self, dispatcher: D, process: Option<Arc<atomic::AtomicBool>>, handle: Handle) -> Result<(),FrontendError> {
         let mut vs = Vec::new();
         for (alias,addr) in self.addresses {    
             info!("starting '{}' server: {}",alias,addr);
