@@ -31,7 +31,7 @@ use tokio::{
     runtime::Handle,
 };
 
-use crate::jresponse::{ApiReply,JsonResponse};
+use crate::jresponse::{ApiReply,JsonResponse,BasicReply};
 use crate::qstring;
 
 pub struct HtmlSender(oneshot::Sender<String>);
@@ -41,12 +41,12 @@ impl HtmlSender {
     }
 }
 
-enum ReplySenderVariant<R: ApiReply> {
+enum ReplySenderVariant<R: ApiReply = BasicReply> {
     Oneshot(Option<oneshot::Sender<JsonResponse<R>>>),
     Stream(body::Sender),
 }
 
-pub struct ReplySender<R: ApiReply> {
+pub struct ReplySender<R: ApiReply = BasicReply> {
     http_debug: bool,
     sender: ReplySenderVariant<R>,
 }
@@ -95,7 +95,7 @@ impl<R: ApiReply> ReplySender<R> {
         }
     }
 }
-pub enum DispatchResult<R,RP: ApiReply>
+pub enum DispatchResult<R,RP: ApiReply = BasicReply>
 {
     Ok(R),
     ChunkedOk(R),

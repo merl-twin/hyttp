@@ -34,7 +34,7 @@ pub trait ApiReply: Sized + Send + std::fmt::Debug + Serialize + DeserializeOwne
 }
 
 #[derive(Debug)]
-pub enum JsonResponse<R: ApiReply > {
+pub enum JsonResponse<R: ApiReply = BasicReply> {
     NotFound,
     MethodNotAllowed,
     BadRequest,
