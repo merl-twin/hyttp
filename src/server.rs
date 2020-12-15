@@ -127,8 +127,23 @@ pub enum InitDestructor {
     Ignore,
 }
 
-#[derive(Clone,Copy)]
+#[derive(Debug,Clone,Copy)]
 pub struct ClientInfo(pub SocketAddr);
+
+#[derive(Debug)]
+pub enum ConnError {
+    Hyper(hyper::Error),
+    Io(std::io::Error),
+}
+
+#[derive(Debug)]
+pub struct ConnectionError {
+    alias: String,
+    n: usize,
+    kind: &'static str,
+    error: ConnError,
+    info: Option<ClientInfo>,
+}
 
 pub trait RequestDispatcher: Clone + Sized + 'static {
     type Request: Send;    
@@ -141,10 +156,17 @@ pub trait RequestDispatcher: Clone + Sized + 'static {
     fn reactor_control(&mut self, _ctrl: ReactorControl) -> InitDestructor {
         InitDestructor::Ignore
     }
-    //fn connection_error_reporter(&self, _error: FrontendError) {}
+
     fn http_debug(&self) -> bool { false }
+    
+    fn connection_error_reporter(&self, e: ConnectionError) {
+        debug!("[{}]-({}) {}{}: {:?}",e.alias,e.n,e.kind,match e.info {
+            None => "".to_string(),
+            Some(ci) => format!(" ({:?})",ci),
+        },e.error);
+    }   
     fn http_log(&self, role: &String, http: &Version, method: &Method, uri: &Uri, _headers: &HeaderMap, remote_addr: SocketAddr) {
-        debug!("{} {:?} {:?} {:?} {}",role,http,method,uri,remote_addr);
+        debug!("[{}] {:?} {:?} {:?} {}",role,http,method,uri,remote_addr);
     }
 }
 
@@ -221,14 +243,30 @@ impl FrontendBuilder {
             match clients.next().await {
                 None => { error!("[tcp] listeners failed"); break; },
                 Some((alias,Err(e))) => {
-                    error!("[{}]-({}) Invalid connection: {:?}",alias,n,e);
+                    dispatcher.connection_error_reporter(ConnectionError {
+                        alias: alias.clone(),
+                        n: n,
+                        kind: "invalid connection",
+                        error: ConnError::Io(e),
+                        info: None,
+                    });
                     continue;
                 },
                 Some((alias,Ok(conn))) => {
                     let remote = match conn.peer_addr() {
-                        Err(e) => { error!("[{}]-({}) Invalid connection peer addr: {:?}",alias,n,e); continue; },
+                        Err(e) => {
+                            dispatcher.connection_error_reporter(ConnectionError {
+                                alias: alias.clone(),
+                                n: n,
+                                kind: "invalid connection peer_addr",
+                                error: ConnError::Io(e),
+                                info: None,
+                            });
+                            continue;
+                        },
                         Ok(addr) => addr,                    
                     };
+                    let err_dispatcher = dispatcher.clone();
                     handle.spawn({                                      
                         Http::new().serve_connection(conn,service_fn({
                             let dispatcher = dispatcher.clone();   
@@ -242,7 +280,13 @@ impl FrontendBuilder {
                             }
                         }))
                             .map_err(move |e| {
-                                error!("[{}]-({}) Invalid connection processing: {:?}",alias,n,e);
+                                err_dispatcher.connection_error_reporter(ConnectionError {
+                                    alias: alias.clone(),
+                                    n: n,
+                                    kind: "invalid connection processing",
+                                    error: ConnError::Hyper(e),
+                                    info: Some(ClientInfo(remote)),
+                                });
                             })
                     }); // detaching
                 }

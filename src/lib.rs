@@ -23,5 +23,7 @@ pub use server::{
     ReplySender,
     HtmlSender,
     DispatchResult,
+    ConnError,
+    ConnectionError,
 };
 
