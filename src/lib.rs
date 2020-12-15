@@ -6,6 +6,7 @@ pub mod qstring;
 pub use hyper::{
     header,
     Version, Method, Uri, StatusCode,
+    Error,
 };
 
 pub use jresponse::{
