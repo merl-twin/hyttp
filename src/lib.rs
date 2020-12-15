@@ -10,6 +10,8 @@ pub use hyper::{
 };
 
 pub use jresponse::{
+    ApiReply,
+    BasicReply,
     JsonResponse,
 };
 

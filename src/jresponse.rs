@@ -1,5 +1,5 @@
 use log::{debug,error,warn};
-use serde::{Serialize,Deserialize};
+use serde::{Serialize,Deserialize,de::DeserializeOwned};
 
 use hyper::{
     header::{CONTENT_LENGTH,CONTENT_TYPE},
@@ -9,28 +9,32 @@ use hyper::{
 
 use serde_json::{self,Value};
 
-#[derive(Serialize,Deserialize)]
-struct Reply {
+#[derive(Debug,Serialize,Deserialize)]
+pub struct BasicReply {
     status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     reply: Option<Value>,
 }
-impl Reply {
-    fn new(s: String, d: Option<Value>) -> Reply {
-        Reply {
+impl BasicReply {
+    pub fn new(s: String, d: Option<Value>) -> BasicReply {
+        BasicReply {
             status: s,
             reply: d,
         }
     }
 }
+impl ApiReply for BasicReply {
+    fn error(status: String, data: Option<Value>) -> Self {
+        BasicReply::new(status,data)
+    }
+}
 
-enum ReplyValue {
-    Reply(Reply),
-    Value(Value),
+pub trait ApiReply: Sized + Send + std::fmt::Debug + Serialize + DeserializeOwned {
+    fn error(status: String, data: Option<Value>) -> Self;
 }
 
 #[derive(Debug)]
-pub enum JsonResponse {
+pub enum JsonResponse<R: ApiReply > {
     NotFound,
     MethodNotAllowed,
     BadRequest,
@@ -38,18 +42,18 @@ pub enum JsonResponse {
     InternalServerError(Option<Value>),
     EmptyQuery,
     RequestTimeout,
-    Ok(Value),
+    Locked,
+    ImATeapot,
+    MisdirectedRequest,
+    UnprocessableEntity,   
+    Ok(R),
     ChunkedOk(Body),
-    Raw{ status: StatusCode, value: Value }, // raw JSON - kind of 'any' reply variant
 }
-impl JsonResponse {
-    pub fn ok(value: Value) -> JsonResponse {
+impl<R: ApiReply> JsonResponse<R> {
+    pub fn ok(value: R) -> JsonResponse<R> {
         JsonResponse::Ok(value)
     }
-    pub fn raw(status: StatusCode, value: Value) -> JsonResponse {
-        JsonResponse::Raw{ status, value }
-    }
-    pub fn internal_error(er: &str) -> JsonResponse {
+    pub fn internal_error(er: &str) -> JsonResponse<R> {
         match serde_json::to_value(er) {
             Ok(v) => JsonResponse::InternalServerError(Some(v)),
             Err(e) => {
@@ -58,22 +62,25 @@ impl JsonResponse {
             }
         }
     }
-    pub fn empty_error() -> JsonResponse {
+    pub fn empty_error() -> JsonResponse<R> {
         JsonResponse::InternalServerError(None)
     }
-    fn reply_value(self) -> Result<ReplyValue,()> {
-        Ok(ReplyValue::Reply(match self {
-            JsonResponse::NotFound =>  Reply::new("Not Found".to_string(),None),
-            JsonResponse::MethodNotAllowed => Reply::new("Method Not Allowed".to_string(),None),
-            JsonResponse::BadRequest => Reply::new("Bad Request".to_string(),None),
-            JsonResponse::TooManyRequests => Reply::new("Too Many Requests".to_string(),None),
-            JsonResponse::EmptyQuery => Reply::new("Empty Query".to_string(),None),
-            JsonResponse::RequestTimeout => Reply::new("Request Timeout".to_string(),None),
-            JsonResponse::InternalServerError(v) => Reply::new("Internal Server Error".to_string(),v),
-            JsonResponse::Ok(v) => Reply::new("Ok".to_string(),Some(v)),
+    fn reply_value(self) -> Result<R,()> {
+        Ok(match self {
+            JsonResponse::NotFound =>  R::error("Not Found".to_string(),None),
+            JsonResponse::MethodNotAllowed => R::error("Method Not Allowed".to_string(),None),
+            JsonResponse::BadRequest => R::error("Bad Request".to_string(),None),
+            JsonResponse::TooManyRequests => R::error("Too Many Requests".to_string(),None),
+            JsonResponse::EmptyQuery => R::error("Empty Query".to_string(),None),
+            JsonResponse::RequestTimeout => R::error("Request Timeout".to_string(),None),
+            JsonResponse::Locked => R::error("Locked".to_string(),None),
+            JsonResponse::ImATeapot => R::error("I'm a teapot".to_string(),None),
+            JsonResponse::MisdirectedRequest => R::error("Misdirected Request".to_string(),None),
+            JsonResponse::UnprocessableEntity => R::error("Unprocessable Entity".to_string(),None),
+            JsonResponse::InternalServerError(v) => R::error("Internal Server Error".to_string(),v),
+            JsonResponse::Ok(v) => v,
             JsonResponse::ChunkedOk(..) => return Err(()),
-            JsonResponse::Raw{ value, .. }  => return Ok(ReplyValue::Value(value)),
-        }))
+        })
     }
     fn status(&self) -> StatusCode {
         match *self {
@@ -84,25 +91,31 @@ impl JsonResponse {
             JsonResponse::EmptyQuery => StatusCode::BAD_REQUEST,
             JsonResponse::RequestTimeout => StatusCode::REQUEST_TIMEOUT,
             JsonResponse::InternalServerError(..) => StatusCode::INTERNAL_SERVER_ERROR,
+            JsonResponse::Locked => StatusCode::LOCKED,
+            JsonResponse::ImATeapot => StatusCode::IM_A_TEAPOT,
+            JsonResponse::MisdirectedRequest => StatusCode::MISDIRECTED_REQUEST,
+            JsonResponse::UnprocessableEntity => StatusCode::UNPROCESSABLE_ENTITY,
             JsonResponse::Ok(..) |
             JsonResponse::ChunkedOk(..) => StatusCode::OK,
-            JsonResponse::Raw{ status, .. } => status,
         }
     }
     pub fn to_response(self) -> Response<Body> {
-        fn error() -> Response<Body> {
-            let json = "{ \"status\": \"Internal Server Error\" }";
-            Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .header(CONTENT_TYPE,mime::APPLICATION_JSON.as_ref())
-                .header(CONTENT_LENGTH,json.len() as u64)
-                .body(Body::from(json))
-                .unwrap_or_else(|_|{
-                    warn!("Error generating response (json-error)");
-                    let mut response = Response::new(Body::empty());
-                    *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
-                    response
-                })
+        fn error<R: ApiReply>() -> Response<Body> {
+            if let Ok(r) = JsonResponse::<R>::InternalServerError(None).reply_value() {
+                if let Ok(json) = serde_json::to_string(&r) {
+                    if let Ok(r) = Response::builder()
+                        .status(StatusCode::INTERNAL_SERVER_ERROR)
+                        .header(CONTENT_TYPE,mime::APPLICATION_JSON.as_ref())
+                        .header(CONTENT_LENGTH,json.len() as u64)
+                        .body(Body::from(json)) {
+                            return r;                            
+                        }
+                }
+            }
+            warn!("Error generating response (json-error)");
+            let mut response = Response::new(Body::empty());
+            *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+            response
         }
         
         let status = self.status();
@@ -114,13 +127,13 @@ impl JsonResponse {
             JsonResponse::EmptyQuery |
             JsonResponse::RequestTimeout | 
             JsonResponse::InternalServerError(..) |
-            JsonResponse::Ok(..) |
-            JsonResponse::Raw{..} => {
+            JsonResponse::Locked |
+            JsonResponse::ImATeapot |
+            JsonResponse::MisdirectedRequest |
+            JsonResponse::UnprocessableEntity |
+            JsonResponse::Ok(..) => {
                 if let Ok(rep_val) = self.reply_value() {
-                    match match &rep_val {
-                        ReplyValue::Reply(rep) => serde_json::to_string(rep),
-                        ReplyValue::Value(val) => serde_json::to_string(val),
-                    } {
+                    match serde_json::to_string(&rep_val) {
                         Ok(json) => {
                             debug!("Size: {}KB",json.len()/1024);
                             return Response::builder()
@@ -130,15 +143,13 @@ impl JsonResponse {
                                 .body(Body::from(json))
                                 .unwrap_or_else(|_| {
                                     warn!("Error generating response (json)");
-                                    let mut response = Response::new(Body::empty());
-                                    *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
-                                    response
+                                    error::<R>()
                                 })
                         },
                         Err(e) => error!("Json error: {:?}",e),
                     }
                 }
-                error()
+                error::<R>()
             },
             JsonResponse::ChunkedOk(body) => {
                 Response::builder()
@@ -155,7 +166,7 @@ impl JsonResponse {
         }
     }
 }
-impl Into<Response<Body>> for JsonResponse {
+impl<R: ApiReply> Into<Response<Body>> for JsonResponse<R> {
     fn into(self) -> Response<Body> {
         self.to_response()
     }

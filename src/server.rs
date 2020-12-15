@@ -16,7 +16,6 @@ use hyper::{
 
 
 use serde_json;
-use serde::Serialize;
 
 use std::{
     self,
@@ -32,7 +31,7 @@ use tokio::{
     runtime::Handle,
 };
 
-use crate::jresponse::JsonResponse;
+use crate::jresponse::{ApiReply,JsonResponse};
 use crate::qstring;
 
 pub struct HtmlSender(oneshot::Sender<String>);
@@ -42,24 +41,24 @@ impl HtmlSender {
     }
 }
 
-enum ReplySenderVariant {
-    Oneshot(Option<oneshot::Sender<JsonResponse>>),
+enum ReplySenderVariant<R: ApiReply> {
+    Oneshot(Option<oneshot::Sender<JsonResponse<R>>>),
     Stream(body::Sender),
 }
 
-pub struct ReplySender {
+pub struct ReplySender<R: ApiReply> {
     http_debug: bool,
-    sender: ReplySenderVariant,
+    sender: ReplySenderVariant<R>,
 }
-impl ReplySender {
-    pub fn oneshot() -> (ReplySender,oneshot::Receiver<JsonResponse>) {
+impl<R: ApiReply> ReplySender<R> {
+    pub fn oneshot() -> (ReplySender<R>,oneshot::Receiver<JsonResponse<R>>) {
         let (tx_body, rx_body) = oneshot::channel();
         (ReplySender {
             http_debug: false,
             sender: ReplySenderVariant::Oneshot(Some(tx_body)),
         },rx_body)
     }
-    pub fn send(&mut self, r: JsonResponse) -> Result<(),FrontendError> {
+    pub fn send(&mut self, r: JsonResponse<R>) -> Result<(),FrontendError> {
         match &mut self.sender {
             ReplySenderVariant::Oneshot(sender) => match sender.take() {
                 Some(sender) => sender.send(r).map_err(|_| FrontendError::BackendSend),
@@ -80,16 +79,12 @@ impl ReplySender {
             ReplySenderVariant::Stream(_sender) => Err(FrontendError::NotImplemented),
         }
     }
-    pub fn send_result<E: Debug, S: Serialize>(&mut self, rr: Result<S,E>) -> Result<(),FrontendError> {
+    pub fn send_result<E: Debug>(&mut self, rr: Result<R,E>) -> Result<(),FrontendError> {
         match &mut self.sender {
             ReplySenderVariant::Oneshot(sender) => match sender.take() {
                 Some(sender) => {
                     match (self.http_debug, rr) {
-                        (_,Ok(s)) => match (self.http_debug,serde_json::to_value(&s)) {
-                            (_,Ok(r)) => sender.send(JsonResponse::Ok(r)).map_err(|_| FrontendError::BackendSend),
-                            (true,Err(e)) => sender.send(JsonResponse::internal_error(&format!("{:?}",e))).map_err(|_| FrontendError::BackendSend),
-                            (false,Err(_)) => sender.send(JsonResponse::empty_error()).map_err(|_| FrontendError::BackendSend),
-                        },
+                        (_,Ok(r)) => sender.send(JsonResponse::Ok(r)).map_err(|_| FrontendError::BackendSend),
                         (true,Err(e)) => sender.send(JsonResponse::internal_error(&format!("{:?}",e))).map_err(|_| FrontendError::BackendSend),
                         (false,Err(_)) => sender.send(JsonResponse::empty_error()).map_err(|_| FrontendError::BackendSend),
                     }
@@ -100,14 +95,15 @@ impl ReplySender {
         }
     }
 }
-pub enum DispatchResult<R> {
+pub enum DispatchResult<R,RP: ApiReply>
+{
     Ok(R),
     ChunkedOk(R),
     Html(R),
-    Err(JsonResponse),
+    Err(JsonResponse<RP>),
 }
-impl<R> From<qstring::UrlParseError> for DispatchResult<R> {
-    fn from(err: qstring::UrlParseError) -> DispatchResult<R> {
+impl<R,RP: ApiReply> From<qstring::UrlParseError> for DispatchResult<R,RP> {
+    fn from(err: qstring::UrlParseError) -> DispatchResult<R,RP> {
         DispatchResult::Err(JsonResponse::internal_error(&format!("{:?}",err)))
     }
 }
@@ -146,9 +142,11 @@ pub struct ConnectionError {
 }
 
 pub trait RequestDispatcher: Clone + Sized + 'static {
-    type Request: Send;    
-    fn dispatch(&self, role: &str, http: &Version, method: &Method, uri: &Uri, headers: &HeaderMap, body: &[u8]) -> DispatchResult<Self::Request>;
-    fn process(&self, req: Self::Request, sender: ReplySender, info: ClientInfo);
+    type Request: Send;
+    type Reply: ApiReply;
+    
+    fn dispatch(&self, role: &str, http: &Version, method: &Method, uri: &Uri, headers: &HeaderMap, body: &[u8]) -> DispatchResult<Self::Request,Self::Reply>;
+    fn process(&self, req: Self::Request, sender: ReplySender<Self::Reply>, info: ClientInfo);
 
     fn process_html(&self, _req: Self::Request, sender: HtmlSender, _info: ClientInfo) {
         sender.send("".to_string()).ok();
@@ -355,7 +353,7 @@ async fn service_call<D: RequestDispatcher>(role: String, remote_addr: SocketAdd
         Err(e) => {
             error!("failed to get request body: {:?}",e);
             match http_debug {
-                true => JsonResponse::internal_error(&format!("failed to get request body: {:?}",e)),
+                true => JsonResponse::<D::Reply>::internal_error(&format!("failed to get request body: {:?}",e)),
                 false => JsonResponse::empty_error(),
             }.to_response()
         },
@@ -384,7 +382,7 @@ async fn service_call<D: RequestDispatcher>(role: String, remote_addr: SocketAdd
                         http_debug: http_debug,
                         sender: ReplySenderVariant::Stream(tx_body),
                     },ClientInfo(remote_addr));
-                    JsonResponse::ChunkedOk(rx_body).to_response()
+                    JsonResponse::<D::Reply>::ChunkedOk(rx_body).to_response()
                 },
                 DispatchResult::Err(jr) => jr.to_response(),
             }
