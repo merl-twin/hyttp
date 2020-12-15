@@ -67,6 +67,15 @@ impl<R: ApiReply> ReplySender<R> {
             ReplySenderVariant::Stream(_sender) => Err(FrontendError::NotImplemented),
         }
     }
+    pub fn ok(&mut self, r: R) -> Result<(),FrontendError> {
+        match &mut self.sender {
+            ReplySenderVariant::Oneshot(sender) => match sender.take() {
+                Some(sender) => sender.send(JsonResponse::Ok(r)).map_err(|_| FrontendError::BackendSend),
+                None => Err(FrontendError::NoSender),
+            },
+            ReplySenderVariant::Stream(_sender) => Err(FrontendError::NotImplemented),
+        }
+    }
     pub fn error(&mut self, se: String) -> Result<(),FrontendError> {
         match &mut self.sender {
             ReplySenderVariant::Oneshot(sender) => match sender.take() {
