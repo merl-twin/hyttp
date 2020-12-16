@@ -3,6 +3,7 @@ mod jresponse;
 
 pub mod qstring;
 
+pub use mime;
 pub use hyper::{
     self,
     header,
