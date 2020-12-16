@@ -5,6 +5,7 @@ pub mod qstring;
 
 pub use hyper::{
     header, client,
+    Request,
     Version, Method, Uri, StatusCode,
     Error,
 };
