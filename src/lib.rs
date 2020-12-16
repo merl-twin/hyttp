@@ -1,6 +1,7 @@
 mod server;
 mod jresponse;
 
+pub mod client;
 pub mod qstring;
 
 pub use mime;
