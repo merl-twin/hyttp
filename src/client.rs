@@ -49,6 +49,9 @@ impl ClientRequest {
 
         serde_json::from_slice(buffer.as_ref()).map_err(ClientError::Json)
     }
+    pub fn server_uri(&self) -> &Uri {
+        &self.server_uri
+    }
 }
 
 
