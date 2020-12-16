@@ -4,7 +4,7 @@ mod jresponse;
 pub mod qstring;
 
 pub use hyper::{
-    header,
+    header, client,
     Version, Method, Uri, StatusCode,
     Error,
 };
