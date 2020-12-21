@@ -76,5 +76,14 @@ impl Client {
         let buffer = body::to_bytes(response.into_body()).await.map_err(ClientError::Hyper)?;
         serde_json::from_slice(buffer.as_ref()).map_err(ClientError::Json)
     }
+    pub async fn get<D: DeserializeOwned>(&self, uri: &str) -> Result<D,ClientError> {
+        let uri: Uri = uri.parse().map_err(ClientError::Uri)?;
+        let req = Request::get(uri)
+            .body(Body::empty())
+            .map_err(ClientError::Request)?;
+        let response = self.cli.request(req).await.map_err(ClientError::Hyper)?;       
+        let buffer = body::to_bytes(response.into_body()).await.map_err(ClientError::Hyper)?;
+        serde_json::from_slice(buffer.as_ref()).map_err(ClientError::Json)
+    }
 }
 
