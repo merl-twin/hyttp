@@ -11,9 +11,9 @@ use serde_json::{self,Value};
 
 #[derive(Debug,Serialize,Deserialize)]
 pub struct BasicReply {
-    status: String,
+    pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    reply: Option<Value>,
+    pub reply: Option<Value>,
 }
 impl BasicReply {
     pub fn new(s: String, d: Option<Value>) -> BasicReply {
