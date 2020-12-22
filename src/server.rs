@@ -20,7 +20,6 @@ use serde_json;
 use std::{
     self,
     fmt::Debug,
-    sync::{atomic,Arc},
     net::SocketAddr,
     collections::BTreeMap,
     convert::Infallible,
@@ -212,25 +211,23 @@ impl FrontendBuilder {
             handle: executor.handle().clone(),
         });
 
-        let process = match init_destructor {
-            InitDestructor::Ignore => None,
-            InitDestructor::Init => {
-                let process = Arc::new(atomic::AtomicBool::new(true));
-                executor.spawn({
-                    let process = process.clone();
-                    async move {
-                        destructor.await.ok();
-                        process.store(false,atomic::Ordering::Relaxed);
-                    }
-                });
-                Some(process)
-            },
-        };
-
         let handle = executor.handle().clone();
-        executor.block_on(self.listen(dispatcher, process, handle).and_then(|()| future::err(FrontendError::UnexpectedTermination)))
+        match init_destructor {
+            InitDestructor::Ignore => {
+                executor.block_on(self.listen(dispatcher, handle).and_then(|()| future::err(FrontendError::UnexpectedTermination)))
+            },
+            InitDestructor::Init => {
+                executor.block_on(async move {
+                    future::select(
+                        destructor,
+                        Box::pin(self.listen(dispatcher, handle))
+                    ).await;
+                    Ok(())
+                })
+            },
+        }
     }
-    async fn listen<D: RequestDispatcher>(self, dispatcher: D, process: Option<Arc<atomic::AtomicBool>>, handle: Handle) -> Result<(),FrontendError> {
+    async fn listen<D: RequestDispatcher>(self, dispatcher: D, handle: Handle) -> Result<(),FrontendError> {
         let mut vs = Vec::new();
         for (alias,addr) in self.addresses {    
             info!("starting '{}' server: {}",alias,addr);
@@ -241,12 +238,6 @@ impl FrontendBuilder {
         let mut clients = stream::select_all(vs);
         let mut n: usize = 0;
         loop {
-            if let Some(process) = &process {
-                if !process.load(atomic::Ordering::Relaxed) {
-                    debug!("Listen is canceled.");
-                    break
-                }
-            }
             n += 1;
             match clients.next().await {
                 None => { error!("[tcp] listeners failed"); break; },
@@ -304,7 +295,6 @@ impl FrontendBuilder {
                     }); // detaching
                 }
             }
-            debug!("Listen finished");
         }
         /*stream::select_all(vs).for_each(move |(alias,conn)| {
             let dispatcher = dispatcher.clone();
