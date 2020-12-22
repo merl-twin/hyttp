@@ -243,6 +243,7 @@ impl FrontendBuilder {
         loop {
             if let Some(process) = &process {
                 if !process.load(atomic::Ordering::Relaxed) {
+                    debug!("Listen is canceled.");
                     break
                 }
             }
@@ -274,8 +275,11 @@ impl FrontendBuilder {
                         Ok(addr) => addr,                    
                     };
                     let err_dispatcher = dispatcher.clone();
-                    handle.spawn({                                      
-                        Http::new().serve_connection(conn,service_fn({
+                    let dispatcher = dispatcher.clone();   
+                    let alias = alias.clone();
+                    handle.spawn(async move {
+                        debug!("Connection ({}) started",n);
+                        let r = Http::new().serve_connection(conn,service_fn({
                             let dispatcher = dispatcher.clone();   
                             let alias = alias.clone();
                             move |request| {
@@ -294,10 +298,13 @@ impl FrontendBuilder {
                                     error: ConnError::Hyper(e),
                                     info: Some(ClientInfo(remote)),
                                 });
-                            })
+                            }).await;
+                        debug!("Connection ({}) finished",n);
+                        r
                     }); // detaching
                 }
             }
+            debug!("Listen finished");
         }
         /*stream::select_all(vs).for_each(move |(alias,conn)| {
             let dispatcher = dispatcher.clone();
