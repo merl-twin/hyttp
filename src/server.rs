@@ -203,6 +203,27 @@ impl FrontendBuilder {
         self.addresses.entry(alias.to_string()).or_insert(addr);
         Ok(self)
     }
+    pub fn async_run<D: RequestDispatcher>(self, mut dispatcher: D, handle: Handle) -> impl futures::Future<Output = Result<(),FrontendError>> {
+        let (tx,destructor) = oneshot::channel::<()>();
+        let init_destructor = dispatcher.reactor_control(ReactorControl{
+            _destructor: tx,
+            handle: handle.clone(),
+        });
+        match init_destructor {
+            InitDestructor::Ignore => {
+                future::Either::Left(self.listen(dispatcher, handle).and_then(|()| future::err(FrontendError::UnexpectedTermination)))
+            },
+            InitDestructor::Init => {
+                future::Either::Right(async move {
+                    future::select(
+                        destructor,
+                        Box::pin(self.listen(dispatcher, handle))
+                    ).await;
+                    Ok(())
+                })
+            },
+        }
+    }
     pub fn run<D: RequestDispatcher>(self, mut dispatcher: D) -> Result<(),FrontendError> {
         let mut executor = tokio::runtime::Runtime::new().map_err(FrontendError::Tokio)?;
         let (tx,destructor) = oneshot::channel::<()>();
