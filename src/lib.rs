@@ -3,6 +3,7 @@ mod jresponse;
 
 pub mod client;
 pub mod qstring;
+pub mod debug;
 
 pub use mime;
 pub use hyper::{

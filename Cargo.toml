@@ -1,6 +1,6 @@
 [package]
 name = "http"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["merl <merl.001.mia@gmail.com>"]
 edition = "2018"
 
@@ -9,7 +9,7 @@ mime = "0.3"
 hyper = "0.13"
 futures = "0.3"
 tokio = { version = "0.2", features = ["tcp"] }
-
+async-trait = "0.1"
 url = "1.7"
 log = "0.4"
 serde = { version = "1.0", features = ["derive"] }
