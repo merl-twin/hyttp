@@ -55,16 +55,18 @@ impl ClientRequest {
 }
 
 
-pub struct Client {
+pub struct Client<D: DeserializeOwned> {
     cli: client::Client<client::HttpConnector>,
+    _d: std::marker::PhantomData<D>,
 }
-impl Client {
-    pub fn new() -> Client {
+impl<D: DeserializeOwned> Client<D> {
+    pub fn new() -> Client<D> {
         Client {
             cli: client::Client::new(),
+            _d: std::marker::PhantomData,
         }
     }
-    pub async fn post_json<S: Serialize, D: DeserializeOwned>(&self, uri: &str, req: &S) -> Result<D,ClientError> {
+    pub async fn post_json<S: Serialize>(&self, uri: &str, req: &S) -> Result<D,ClientError> {
         let uri: Uri = uri.parse().map_err(ClientError::Uri)?;
         let json = serde_json::to_string(req).map_err(ClientError::Json)?.into_bytes();
         let req = Request::post(uri)
@@ -76,7 +78,7 @@ impl Client {
         let buffer = body::to_bytes(response.into_body()).await.map_err(ClientError::Hyper)?;
         serde_json::from_slice(buffer.as_ref()).map_err(ClientError::Json)
     }
-    pub async fn get<D: DeserializeOwned>(&self, uri: &str) -> Result<D,ClientError> {
+    pub async fn get(&self, uri: &str) -> Result<D,ClientError> {
         let uri: Uri = uri.parse().map_err(ClientError::Uri)?;
         let req = Request::get(uri)
             .body(Body::empty())
