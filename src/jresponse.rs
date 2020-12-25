@@ -65,7 +65,7 @@ impl<R: ApiReply> JsonResponse<R> {
     pub fn empty_error() -> JsonResponse<R> {
         JsonResponse::InternalServerError(None)
     }
-    fn reply_value(self) -> Result<R,()> {
+    pub fn reply_value(self) -> Result<R,()> {
         Ok(match self {
             JsonResponse::NotFound =>  R::error("Not Found".to_string(),None),
             JsonResponse::MethodNotAllowed => R::error("Method Not Allowed".to_string(),None),
