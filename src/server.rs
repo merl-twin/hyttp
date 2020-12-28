@@ -40,73 +40,55 @@ impl HtmlSender {
     }
 }
 
-enum ReplySenderVariant<R: ApiReply = BasicReply> {
-    Oneshot(Option<oneshot::Sender<JsonResponse<R>>>),
-    Stream(body::Sender),
-}
-
 pub struct ReplySender<R: ApiReply = BasicReply> {
     http_debug: bool,
-    sender: ReplySenderVariant<R>,
+    sender: Option<oneshot::Sender<JsonResponse<R>>>,
 }
 impl<R: ApiReply> ReplySender<R> {
     pub fn oneshot() -> (ReplySender<R>,oneshot::Receiver<JsonResponse<R>>) {
         let (tx_body, rx_body) = oneshot::channel();
         (ReplySender {
             http_debug: false,
-            sender: ReplySenderVariant::Oneshot(Some(tx_body)),
+            sender: Some(tx_body),
         },rx_body)
     }
     pub fn send(&mut self, r: JsonResponse<R>) -> Result<(),FrontendError> {
-        match &mut self.sender {
-            ReplySenderVariant::Oneshot(sender) => match sender.take() {
-                Some(sender) => sender.send(r).map_err(|_| FrontendError::BackendSend),
-                None => Err(FrontendError::NoSender),
-            },
-            ReplySenderVariant::Stream(_sender) => Err(FrontendError::NotImplemented),
+        match self.sender.take() {
+            Some(sender) => sender.send(r).map_err(|_| FrontendError::BackendSend),
+            None => Err(FrontendError::NoSender),
         }
     }
     pub fn ok(&mut self, r: R) -> Result<(),FrontendError> {
-        match &mut self.sender {
-            ReplySenderVariant::Oneshot(sender) => match sender.take() {
-                Some(sender) => sender.send(JsonResponse::Ok(r)).map_err(|_| FrontendError::BackendSend),
-                None => Err(FrontendError::NoSender),
-            },
-            ReplySenderVariant::Stream(_sender) => Err(FrontendError::NotImplemented),
+        match self.sender.take() {
+            Some(sender) => sender.send(JsonResponse::Ok(r)).map_err(|_| FrontendError::BackendSend),
+            None => Err(FrontendError::NoSender),
         }
     }
     pub fn error(&mut self, se: String) -> Result<(),FrontendError> {
-        match &mut self.sender {
-            ReplySenderVariant::Oneshot(sender) => match sender.take() {
-                Some(sender) => match self.http_debug {
-                    true => sender.send(JsonResponse::internal_error(&se)).map_err(|_| FrontendError::BackendSend),
-                    false => sender.send(JsonResponse::empty_error()).map_err(|_| FrontendError::BackendSend),
-                },
-                None => Err(FrontendError::NoSender),
+        match self.sender.take() {
+            Some(sender) => match self.http_debug {
+                true => sender.send(JsonResponse::internal_error(&se)).map_err(|_| FrontendError::BackendSend),
+                false => sender.send(JsonResponse::empty_error()).map_err(|_| FrontendError::BackendSend),
             },
-            ReplySenderVariant::Stream(_sender) => Err(FrontendError::NotImplemented),
+            None => Err(FrontendError::NoSender),
         }
     }
     pub fn send_result<E: Debug>(&mut self, rr: Result<R,E>) -> Result<(),FrontendError> {
-        match &mut self.sender {
-            ReplySenderVariant::Oneshot(sender) => match sender.take() {
-                Some(sender) => {
-                    match (self.http_debug, rr) {
-                        (_,Ok(r)) => sender.send(JsonResponse::Ok(r)).map_err(|_| FrontendError::BackendSend),
-                        (true,Err(e)) => sender.send(JsonResponse::internal_error(&format!("{:?}",e))).map_err(|_| FrontendError::BackendSend),
-                        (false,Err(_)) => sender.send(JsonResponse::empty_error()).map_err(|_| FrontendError::BackendSend),
-                    }
-                },
-                None => Err(FrontendError::NoSender),
+        match self.sender.take() {
+            Some(sender) => {
+                match (self.http_debug, rr) {
+                    (_,Ok(r)) => sender.send(JsonResponse::Ok(r)).map_err(|_| FrontendError::BackendSend),
+                    (true,Err(e)) => sender.send(JsonResponse::internal_error(&format!("{:?}",e))).map_err(|_| FrontendError::BackendSend),
+                    (false,Err(_)) => sender.send(JsonResponse::empty_error()).map_err(|_| FrontendError::BackendSend),
+                }
             },
-            ReplySenderVariant::Stream(_sender) => Err(FrontendError::NotImplemented),
+            None => Err(FrontendError::NoSender),
         }
     }
 }
 pub enum DispatchResult<R,RP: ApiReply = BasicReply>
 {
     Ok(R),
-    ChunkedOk(R),
     Html(R),
     Err(JsonResponse<RP>),
 }
@@ -180,7 +162,6 @@ pub trait RequestDispatcher: Clone + Send + Sized + 'static {
 pub enum FrontendError {
     UnexpectedTermination,
     NoSender,
-    NotImplemented,
     BackendSend,
     Json(serde_json::Error),
     Hyper(hyper::Error),
@@ -396,20 +377,12 @@ async fn service_call<D: RequestDispatcher>(role: String, remote_addr: SocketAdd
                     let (tx_body, rx_body) = oneshot::channel();
                     dispatcher.process(req,ReplySender {
                         http_debug: http_debug,
-                        sender: ReplySenderVariant::Oneshot(Some(tx_body)),
+                        sender: Some(tx_body),
                     },ClientInfo(remote_addr));
                     rx_body.await
                         .map_err(|_| warn!("request was cancelled"))
                         .unwrap_or(JsonResponse::empty_error())
                         .to_response()
-                },
-                DispatchResult::ChunkedOk(req) => {
-                    let (tx_body, rx_body) = Body::channel();
-                    dispatcher.process(req,ReplySender {
-                        http_debug: http_debug,
-                        sender: ReplySenderVariant::Stream(tx_body),
-                    },ClientInfo(remote_addr));
-                    JsonResponse::<D::Reply>::ChunkedOk(rx_body).to_response()
                 },
                 DispatchResult::Err(jr) => jr.to_response(),
             }

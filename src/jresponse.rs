@@ -47,7 +47,6 @@ pub enum JsonResponse<R: ApiReply = BasicReply> {
     MisdirectedRequest,
     UnprocessableEntity,   
     Ok(R),
-    ChunkedOk(Body),
 }
 impl<R: ApiReply> JsonResponse<R> {
     pub fn ok(value: R) -> JsonResponse<R> {
@@ -65,8 +64,8 @@ impl<R: ApiReply> JsonResponse<R> {
     pub fn empty_error() -> JsonResponse<R> {
         JsonResponse::InternalServerError(None)
     }
-    pub fn reply_value(self) -> Result<R,()> {
-        Ok(match self {
+    pub fn reply_value(self) -> R {
+        match self {
             JsonResponse::NotFound =>  R::error("Not Found".to_string(),None),
             JsonResponse::MethodNotAllowed => R::error("Method Not Allowed".to_string(),None),
             JsonResponse::BadRequest => R::error("Bad Request".to_string(),None),
@@ -79,8 +78,7 @@ impl<R: ApiReply> JsonResponse<R> {
             JsonResponse::UnprocessableEntity => R::error("Unprocessable Entity".to_string(),None),
             JsonResponse::InternalServerError(v) => R::error("Internal Server Error".to_string(),v),
             JsonResponse::Ok(v) => v,
-            JsonResponse::ChunkedOk(..) => return Err(()),
-        })
+        }
     }
     fn status(&self) -> StatusCode {
         match *self {
@@ -95,73 +93,45 @@ impl<R: ApiReply> JsonResponse<R> {
             JsonResponse::ImATeapot => StatusCode::IM_A_TEAPOT,
             JsonResponse::MisdirectedRequest => StatusCode::MISDIRECTED_REQUEST,
             JsonResponse::UnprocessableEntity => StatusCode::UNPROCESSABLE_ENTITY,
-            JsonResponse::Ok(..) |
-            JsonResponse::ChunkedOk(..) => StatusCode::OK,
+            JsonResponse::Ok(..) => StatusCode::OK,
         }
     }
     pub fn to_response(self) -> Response<Body> {
         fn error<R: ApiReply>() -> Response<Body> {
-            if let Ok(r) = JsonResponse::<R>::InternalServerError(None).reply_value() {
-                if let Ok(json) = serde_json::to_string(&r) {
-                    if let Ok(r) = Response::builder()
-                        .status(StatusCode::INTERNAL_SERVER_ERROR)
-                        .header(CONTENT_TYPE,mime::APPLICATION_JSON.as_ref())
-                        .header(CONTENT_LENGTH,json.len() as u64)
-                        .body(Body::from(json)) {
-                            return r;                            
-                        }
-                }
+            let r = JsonResponse::<R>::InternalServerError(None).reply_value();
+            if let Ok(json) = serde_json::to_string(&r) {
+                if let Ok(r) = Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .header(CONTENT_TYPE,mime::APPLICATION_JSON.as_ref())
+                    .header(CONTENT_LENGTH,json.len() as u64)
+                    .body(Body::from(json)) {
+                        return r;                            
+                    }
             }
+
             warn!("Error generating response (json-error)");
             let mut response = Response::new(Body::empty());
             *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
             response
         }
-        
+
         let status = self.status();
-        match self {
-            JsonResponse::NotFound |
-            JsonResponse::MethodNotAllowed |
-            JsonResponse::TooManyRequests |
-            JsonResponse::BadRequest |
-            JsonResponse::EmptyQuery |
-            JsonResponse::RequestTimeout | 
-            JsonResponse::InternalServerError(..) |
-            JsonResponse::Locked |
-            JsonResponse::ImATeapot |
-            JsonResponse::MisdirectedRequest |
-            JsonResponse::UnprocessableEntity |
-            JsonResponse::Ok(..) => {
-                if let Ok(rep_val) = self.reply_value() {
-                    match serde_json::to_string(&rep_val) {
-                        Ok(json) => {
-                            debug!("Size: {}KB",json.len()/1024);
-                            return Response::builder()
-                                .status(status)
-                                .header(CONTENT_TYPE,mime::APPLICATION_JSON.as_ref())
-                                .header(CONTENT_LENGTH,json.len() as u64)
-                                .body(Body::from(json))
-                                .unwrap_or_else(|_| {
-                                    warn!("Error generating response (json)");
-                                    error::<R>()
-                                })
-                        },
-                        Err(e) => error!("Json error: {:?}",e),
-                    }
-                }
-                error::<R>()
-            },
-            JsonResponse::ChunkedOk(body) => {
+        match serde_json::to_string(&self.reply_value()) {
+            Ok(json) => {
+                debug!("Size: {}KB",json.len()/1024);
                 Response::builder()
                     .status(status)
-                    .header(CONTENT_TYPE,mime::APPLICATION_OCTET_STREAM.as_ref())
-                    .body(body)
+                    .header(CONTENT_TYPE,mime::APPLICATION_JSON.as_ref())
+                    .header(CONTENT_LENGTH,json.len() as u64)
+                    .body(Body::from(json))
                     .unwrap_or_else(|_| {
-                        warn!("Error generating response (chunked-json)");
-                        let mut response = Response::new(Body::empty());
-                        *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
-                        response
+                        warn!("Error generating response (json)");
+                        error::<R>()
                     })
+            },
+            Err(e) => {
+                error!("Json error: {:?}",e);
+                error::<R>()
             },
         }
     }
