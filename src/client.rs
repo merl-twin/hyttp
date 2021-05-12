@@ -1,7 +1,8 @@
 use hyper::{
     Uri,
     header::{CONTENT_LENGTH,CONTENT_TYPE},
-    self,client,Request,body,Body,
+    self,Request,body,Body,
+    client::{self,HttpConnector},
 };
 use mime;
 use serde::{Serialize,de::DeserializeOwned};
@@ -17,24 +18,35 @@ pub enum ClientError {
 pub struct ClientRequest {
     server_uri: Uri,
     json: Option<Vec<u8>>,
+    connect_timeout: Option<std::time::Duration>, 
 }
 impl ClientRequest {
     pub fn from_url_and_json<S: Serialize>(url: &str, req: &S) -> Result<ClientRequest,ClientError> {       
         Ok(ClientRequest {
             server_uri: url.parse().map_err(ClientError::Uri)?,
             json: Some(serde_json::to_string(req).map_err(ClientError::Json)?.into_bytes()),
+            connect_timeout: None,
         })
     }
     pub fn get_from_url(url: &str) -> Result<ClientRequest,ClientError> {
         Ok(ClientRequest {
             server_uri: url.parse().map_err(ClientError::Uri)?,
             json: None,
+            connect_timeout: None,
         })
+    }
+    pub fn set_connect_timeout(mut self, timeout: std::time::Duration) -> ClientRequest {
+        self.connect_timeout = Some(timeout);
+        self
     }
 }
 impl ClientRequest {
-    pub async fn future<R: DeserializeOwned>(self) -> Result<R,ClientError> {
-        let client = client::Client::new();
+    pub async fn future<R: DeserializeOwned>(self) -> Result<R,ClientError> {    
+        let client = client::Builder::default().build({
+            let mut http_conn = HttpConnector::new();
+            http_conn.set_connect_timeout(self.connect_timeout);
+            http_conn
+        });
         let req = match self.json {
             Some(json) => Request::post(self.server_uri)
                 .header(CONTENT_TYPE,mime::APPLICATION_JSON.as_ref())
@@ -63,6 +75,16 @@ impl<D: DeserializeOwned> Client<D> {
     pub fn new() -> Client<D> {
         Client {
             cli: client::Client::new(),
+            _d: std::marker::PhantomData,
+        }
+    }
+    pub fn with_connect_timeout(timeout: std::time::Duration) -> Client<D> {
+        Client {
+            cli: client::Builder::default().build({
+                let mut http_conn = HttpConnector::new();
+                http_conn.set_connect_timeout(Some(timeout));
+                http_conn
+            }),
             _d: std::marker::PhantomData,
         }
     }
