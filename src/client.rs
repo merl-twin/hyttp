@@ -18,7 +18,8 @@ pub enum ClientError {
 pub struct ClientRequest {
     server_uri: Uri,
     json: Option<Vec<u8>>,
-    connect_timeout: Option<std::time::Duration>, 
+    connect_timeout: Option<std::time::Duration>,
+    request_timeout: Option<std::time::Duration>, 
 }
 impl ClientRequest {
     pub fn from_url_and_json<S: Serialize>(url: &str, req: &S) -> Result<ClientRequest,ClientError> {       
@@ -26,6 +27,7 @@ impl ClientRequest {
             server_uri: url.parse().map_err(ClientError::Uri)?,
             json: Some(serde_json::to_string(req).map_err(ClientError::Json)?.into_bytes()),
             connect_timeout: None,
+            request_timeout: None,
         })
     }
     pub fn get_from_url(url: &str) -> Result<ClientRequest,ClientError> {
@@ -33,10 +35,15 @@ impl ClientRequest {
             server_uri: url.parse().map_err(ClientError::Uri)?,
             json: None,
             connect_timeout: None,
+            request_timeout: None,
         })
     }
-    pub fn set_connect_timeout(mut self, timeout: std::time::Duration) -> ClientRequest {
-        self.connect_timeout = Some(timeout);
+    pub fn with_connect_timeout(mut self, tm: std::time::Duration) -> ClientRequest {
+        self.connect_timeout = Some(tm);
+        self
+    }
+    pub fn with_request_timeout(mut self, tm: std::time::Duration) -> ClientRequest {
+        self.request_timeout = Some(tm);
         self
     }
 }

@@ -29,6 +29,7 @@ use tokio::{
     net::TcpListener,
     runtime::Handle,
 };
+use tokio_stream::wrappers::TcpListenerStream;
 
 use crate::jresponse::{ApiReply,JsonResponse,BasicReply};
 use crate::qstring;
@@ -206,7 +207,7 @@ impl FrontendBuilder {
         }
     }
     pub fn run<D: RequestDispatcher>(self, mut dispatcher: D) -> Result<(),FrontendError> {
-        let mut executor = tokio::runtime::Runtime::new().map_err(FrontendError::Tokio)?;
+        let executor = tokio::runtime::Runtime::new().map_err(FrontendError::Tokio)?;
         let (tx,destructor) = oneshot::channel::<()>();
         let init_destructor = dispatcher.reactor_control(ReactorControl{
             _destructor: tx,
@@ -233,9 +234,10 @@ impl FrontendBuilder {
         let mut vs = Vec::new();
         for (alias,addr) in self.addresses {    
             info!("starting '{}' server: {}",alias,addr);
-            vs.push(TcpListener::bind(addr).await
+            vs.push(TcpListenerStream::new({
+                TcpListener::bind(addr).await
                     .map_err(FrontendError::Tcp)?
-                    .map(move |conn| (alias.clone(),conn)));
+            }).map(move |conn| (alias.clone(),conn)));
         }
         let mut clients = stream::select_all(vs);
         let mut n: usize = 0;
