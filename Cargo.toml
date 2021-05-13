@@ -6,7 +6,7 @@ edition = "2018"
 
 [dependencies]
 mime = "0.3"
-hyper = { version = "0.14", features = ["client","server","http2","tcp"] }
+hyper = { version = "0.14", features = ["client","server","http1","http2","tcp"] }
 futures = "0.3"
 tokio = { version = "1.5", features = ["net","rt","rt-multi-thread","time"] }
 tokio-stream = { version = "0.1", features = ["net"] }
