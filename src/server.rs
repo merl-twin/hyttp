@@ -195,13 +195,13 @@ impl FrontendBuilder {
         tokio::spawn(async move {
             match init_destructor {
                 InitDestructor::Ignore => {
-                    self.listen2(dispatcher).await?;
+                    self.listen(dispatcher,tokio::runtime::Handle::current()).await?;
                     Err(FrontendError::UnexpectedTermination)
                 },
                 InitDestructor::Init => {
                     match future::select(
                         Box::pin(destructor.map(|_| Ok(()))),
-                        Box::pin(self.listen2(dispatcher)),//Box::pin(self.listen(dispatcher, handle))
+                        Box::pin(self.listen(dispatcher,tokio::runtime::Handle::current())),//Box::pin(self.listen(dispatcher, handle))
                     ).await {
                         Either::Left((res,_)) => res,
                         Either::Right((res,_)) => res,
@@ -299,78 +299,6 @@ impl FrontendBuilder {
                     let dispatcher = dispatcher.clone();   
                     let alias = alias.clone();
                     handle.spawn(async move {
-                        debug!("Connection ({}) started",n);
-                        let r = Http::new().serve_connection(conn,service_fn({
-                            let dispatcher = dispatcher.clone();   
-                            let alias = alias.clone();
-                            move |request| {
-                                let dispatcher = dispatcher.clone();
-                                let alias = alias.clone();
-                                async move {
-                                    Ok::<_, Infallible>(service_call(alias,remote,request,dispatcher).await)
-                                }
-                            }
-                        }))
-                            .map_err(move |e| {
-                                err_dispatcher.connection_error_reporter(ConnectionError {
-                                    alias: alias.clone(),
-                                    n: n,
-                                    kind: "invalid connection processing",
-                                    error: ConnError::Hyper(e),
-                                    info: Some(ClientInfo(remote)),
-                                });
-                            }).await;
-                        debug!("Connection ({}) finished",n);
-                        r
-                    }); // detaching
-                }
-            }
-        }
-        Ok(())
-    }
-    async fn listen2<D: RequestDispatcher>(self, dispatcher: D) -> Result<(),FrontendError> {
-        let mut vs = Vec::new();
-        for (alias,addr) in self.addresses {    
-            info!("starting '{}' server: {}",alias,addr);
-            vs.push(TcpListenerStream::new({
-                TcpListener::bind(addr).await
-                    .map_err(FrontendError::Tcp)?
-            }).map(move |conn| (alias.clone(),conn)));
-        }
-        let mut clients = stream::select_all(vs);
-        let mut n: usize = 0;
-        loop {
-            n += 1;
-            match clients.next().await {
-                None => { error!("[tcp] listeners failed"); break; },
-                Some((alias,Err(e))) => {
-                    dispatcher.connection_error_reporter(ConnectionError {
-                        alias: alias.clone(),
-                        n: n,
-                        kind: "invalid connection",
-                        error: ConnError::Io(e),
-                        info: None,
-                    });
-                    continue;
-                },
-                Some((alias,Ok(conn))) => {
-                    let remote = match conn.peer_addr() {
-                        Err(e) => {
-                            dispatcher.connection_error_reporter(ConnectionError {
-                                alias: alias.clone(),
-                                n: n,
-                                kind: "invalid connection peer_addr",
-                                error: ConnError::Io(e),
-                                info: None,
-                            });
-                            continue;
-                        },
-                        Ok(addr) => addr,                    
-                    };
-                    let err_dispatcher = dispatcher.clone();
-                    let dispatcher = dispatcher.clone();   
-                    let alias = alias.clone();
-                    tokio::spawn(async move {
                         debug!("Connection ({}) started",n);
                         let r = Http::new().serve_connection(conn,service_fn({
                             let dispatcher = dispatcher.clone();   
