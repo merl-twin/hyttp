@@ -1,9 +1,10 @@
 use futures::{
-    future,
+    future::{self,Either},
     stream,
     channel::oneshot,
     StreamExt,
     TryFutureExt,
+    FutureExt,
 };
 use log::{debug,info,error,warn};
 use hyper::{
@@ -185,6 +186,31 @@ impl FrontendBuilder {
         self.addresses.entry(alias.to_string()).or_insert(addr);
         Ok(self)
     }
+    pub async fn spawn<D: RequestDispatcher>(self, mut dispatcher: D) -> tokio::task::JoinHandle<Result<(),FrontendError>> {
+        let (tx,destructor) = oneshot::channel::<()>();
+        let init_destructor = dispatcher.reactor_control(ReactorControl{
+            _destructor: tx,
+            handle: tokio::runtime::Handle::current(),
+        });
+        tokio::spawn(async move {
+            match init_destructor {
+                InitDestructor::Ignore => {
+                    self.listen2(dispatcher).await?;
+                    Err(FrontendError::UnexpectedTermination)
+                },
+                InitDestructor::Init => {
+                    match future::select(
+                        Box::pin(destructor.map(|_| Ok(()))),
+                        Box::pin(self.listen2(dispatcher)),//Box::pin(self.listen(dispatcher, handle))
+                    ).await {
+                        Either::Left((res,_)) => res,
+                        Either::Right((res,_)) => res,
+                    }?;
+                    Ok(())
+                },
+            }
+        })
+    }
     pub fn async_run<D: RequestDispatcher>(self, mut dispatcher: D, handle: Handle) -> impl futures::Future<Output = Result<(),FrontendError>> {
         let (tx,destructor) = oneshot::channel::<()>();
         let init_destructor = dispatcher.reactor_control(ReactorControl{
@@ -300,35 +326,78 @@ impl FrontendBuilder {
                 }
             }
         }
-        /*stream::select_all(vs).for_each(move |(alias,conn)| {
-            let dispatcher = dispatcher.clone();
-            let process = process.clone();
-            async move {
-                let conn = match conn {
-                    Ok(conn) => conn,
-                    Err(e) => {
-                        error!("[tcp] Invalid connection: {:?}",e);
-                        return ();
-                    },
-                };
-                let remote = match conn.peer_addr() {
-                    Ok(addr) => addr,
-                    Err(e) => {
-                        error!("[tcp] Invalid connection peer addr: {:?}",e);
-                        return ();
-                    },
-                };           
-                if let Err(e) = Http::new().serve_connection(conn,service_fn(move |request| {
-                    let dispatcher = dispatcher.clone();
+        Ok(())
+    }
+    async fn listen2<D: RequestDispatcher>(self, dispatcher: D) -> Result<(),FrontendError> {
+        let mut vs = Vec::new();
+        for (alias,addr) in self.addresses {    
+            info!("starting '{}' server: {}",alias,addr);
+            vs.push(TcpListenerStream::new({
+                TcpListener::bind(addr).await
+                    .map_err(FrontendError::Tcp)?
+            }).map(move |conn| (alias.clone(),conn)));
+        }
+        let mut clients = stream::select_all(vs);
+        let mut n: usize = 0;
+        loop {
+            n += 1;
+            match clients.next().await {
+                None => { error!("[tcp] listeners failed"); break; },
+                Some((alias,Err(e))) => {
+                    dispatcher.connection_error_reporter(ConnectionError {
+                        alias: alias.clone(),
+                        n: n,
+                        kind: "invalid connection",
+                        error: ConnError::Io(e),
+                        info: None,
+                    });
+                    continue;
+                },
+                Some((alias,Ok(conn))) => {
+                    let remote = match conn.peer_addr() {
+                        Err(e) => {
+                            dispatcher.connection_error_reporter(ConnectionError {
+                                alias: alias.clone(),
+                                n: n,
+                                kind: "invalid connection peer_addr",
+                                error: ConnError::Io(e),
+                                info: None,
+                            });
+                            continue;
+                        },
+                        Ok(addr) => addr,                    
+                    };
+                    let err_dispatcher = dispatcher.clone();
+                    let dispatcher = dispatcher.clone();   
                     let alias = alias.clone();
-                    async move {
-                        Ok::<_, Infallible>(service_call(alias,remote,request,dispatcher).await)
-                    }
-                })).await {
-                    error!("[tcp] Invalid connection processing: {:?}",e);
+                    tokio::spawn(async move {
+                        debug!("Connection ({}) started",n);
+                        let r = Http::new().serve_connection(conn,service_fn({
+                            let dispatcher = dispatcher.clone();   
+                            let alias = alias.clone();
+                            move |request| {
+                                let dispatcher = dispatcher.clone();
+                                let alias = alias.clone();
+                                async move {
+                                    Ok::<_, Infallible>(service_call(alias,remote,request,dispatcher).await)
+                                }
+                            }
+                        }))
+                            .map_err(move |e| {
+                                err_dispatcher.connection_error_reporter(ConnectionError {
+                                    alias: alias.clone(),
+                                    n: n,
+                                    kind: "invalid connection processing",
+                                    error: ConnError::Hyper(e),
+                                    info: Some(ClientInfo(remote)),
+                                });
+                            }).await;
+                        debug!("Connection ({}) finished",n);
+                        r
+                    }); // detaching
                 }
             }
-        }).await;*/
+        }
         Ok(())
     }
 }
