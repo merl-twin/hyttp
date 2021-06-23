@@ -170,6 +170,36 @@ pub enum FrontendError {
     Address(std::net::AddrParseError),
     Tokio(std::io::Error),
     Tcp(std::io::Error),
+    Canceled,
+}
+
+pub struct FrontendTask {
+    handle: tokio::task::JoinHandle<()>,
+    receiver: oneshot::Receiver<Result<(),FrontendError>>,
+}
+impl FrontendTask {
+    pub fn is_ready(&mut self) -> bool {
+        match self.receiver.try_recv() {
+            Err(oneshot::Canceled) => true,
+            Ok(None) => false,
+            Ok(Some(..)) => true,
+        }
+    }
+    pub fn close(mut self) -> Result<(),FrontendError> {
+        self.handle.abort();
+        match self.receiver.try_recv() {
+            Err(oneshot::Canceled) => Err(FrontendError::Canceled),
+            Ok(None) => {
+                self.receiver.close();
+                match self.receiver.try_recv() {
+                    Err(oneshot::Canceled) => Err(FrontendError::Canceled),
+                    Ok(None) => Err(FrontendError::Canceled),
+                    Ok(Some(res)) => res,
+                }
+            },
+            Ok(Some(res)) => res,
+        }
+    }
 }
 
 pub struct FrontendBuilder {
@@ -186,30 +216,34 @@ impl FrontendBuilder {
         self.addresses.entry(alias.to_string()).or_insert(addr);
         Ok(self)
     }
-    pub async fn spawn<D: RequestDispatcher>(self, mut dispatcher: D) -> tokio::task::JoinHandle<Result<(),FrontendError>> {
+    pub async fn spawn<D: RequestDispatcher>(self, mut dispatcher: D) -> FrontendTask {
         let (tx,destructor) = oneshot::channel::<()>();
         let init_destructor = dispatcher.reactor_control(ReactorControl{
             _destructor: tx,
             handle: tokio::runtime::Handle::current(),
         });
-        tokio::spawn(async move {
-            match init_destructor {
-                InitDestructor::Ignore => {
-                    self.listen(dispatcher,tokio::runtime::Handle::current()).await?;
-                    Err(FrontendError::UnexpectedTermination)
-                },
-                InitDestructor::Init => {
-                    match future::select(
-                        Box::pin(destructor.map(|_| Ok(()))),
-                        Box::pin(self.listen(dispatcher,tokio::runtime::Handle::current())),//Box::pin(self.listen(dispatcher, handle))
-                    ).await {
-                        Either::Left((res,_)) => res,
-                        Either::Right((res,_)) => res,
-                    }?;
-                    Ok(())
-                },
-            }
-        })
+        let (res_tx,res_rx) = oneshot::channel();
+        FrontendTask {
+            receiver: res_rx,
+            handle: tokio::spawn(async move {
+                let res = match init_destructor {
+                    InitDestructor::Ignore => {
+                        self.listen(dispatcher,tokio::runtime::Handle::current()).await.ok();
+                        Err(FrontendError::UnexpectedTermination)
+                    },
+                    InitDestructor::Init => {
+                        match future::select(
+                            Box::pin(destructor.map(|_| Ok(()))),
+                            Box::pin(self.listen(dispatcher,tokio::runtime::Handle::current())),//Box::pin(self.listen(dispatcher, handle))
+                        ).await {
+                            Either::Left((res,_)) => res,
+                            Either::Right((res,_)) => res,
+                        }
+                    },
+                };
+                res_tx.send(res).ok();
+            }),
+        }
     }
     pub fn async_run<D: RequestDispatcher>(self, mut dispatcher: D, handle: Handle) -> impl futures::Future<Output = Result<(),FrontendError>> {
         let (tx,destructor) = oneshot::channel::<()>();
