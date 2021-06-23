@@ -216,7 +216,7 @@ impl FrontendBuilder {
         self.addresses.entry(alias.to_string()).or_insert(addr);
         Ok(self)
     }
-    pub async fn spawn<D: RequestDispatcher>(self, mut dispatcher: D) -> FrontendTask {
+    pub fn spawn<D: RequestDispatcher>(self, mut dispatcher: D) -> FrontendTask {
         let (tx,destructor) = oneshot::channel::<()>();
         let init_destructor = dispatcher.reactor_control(ReactorControl{
             _destructor: tx,
