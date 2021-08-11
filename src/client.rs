@@ -144,3 +144,60 @@ impl<D: DeserializeOwned> Client<D> {
     }
 }
 
+use hyper_tls::HttpsConnector;
+
+pub struct TlsClient<D: DeserializeOwned> {
+    cli: client::Client<HttpsConnector<client::HttpConnector>>,
+    _d: std::marker::PhantomData<D>,
+    request_timeout: Option<std::time::Duration>, 
+}
+impl<D: DeserializeOwned> TlsClient<D> {
+    pub fn new() -> TlsClient<D> {
+        TlsClient {
+            cli: {
+                let mut https = HttpsConnector::new();
+                https.https_only(true);
+                client::Client::builder().build::<_, hyper::Body>(https)
+            },
+            _d: std::marker::PhantomData,
+            request_timeout: None, 
+        }
+    }
+    pub fn with_request_timeout(mut self, tm: std::time::Duration) -> TlsClient<D> {
+        self.request_timeout = Some(tm);
+        self
+    }
+    pub async fn post_json<S: Serialize>(&self, uri: &str, req: &S) -> Result<D,ClientError> {
+        let tm_uri = uri.to_string();
+        let uri: Uri = uri.parse().map_err(ClientError::Uri)?;
+        let json = serde_json::to_string(req).map_err(ClientError::Json)?.into_bytes();
+        let req = Request::post(uri)
+            .header(CONTENT_TYPE,mime::APPLICATION_JSON.as_ref())
+            .header(CONTENT_LENGTH,json.len() as u64)
+            .body(Body::from(json))
+            .map_err(ClientError::Request)?;
+        let response = match self.request_timeout {
+            None => self.cli.request(req).await.map_err(ClientError::Hyper)?,
+            Some(tm) => tokio::time::timeout(tm,self.cli.request(req)).await
+                .map_err(move |_| ClientError::Timeout(tm_uri))?
+                .map_err(ClientError::Hyper)?,
+        };
+        let buffer = body::to_bytes(response.into_body()).await.map_err(ClientError::Hyper)?;
+        serde_json::from_slice(buffer.as_ref()).map_err(ClientError::Json)
+    }
+    pub async fn get(&self, uri: &str) -> Result<D,ClientError> {
+        let tm_uri = uri.to_string();
+        let uri: Uri = uri.parse().map_err(ClientError::Uri)?;
+        let req = Request::get(uri)
+            .body(Body::empty())
+            .map_err(ClientError::Request)?;
+        let response = match self.request_timeout {
+            None => self.cli.request(req).await.map_err(ClientError::Hyper)?,
+            Some(tm) => tokio::time::timeout(tm,self.cli.request(req)).await
+                .map_err(move |_| ClientError::Timeout(tm_uri))?
+                .map_err(ClientError::Hyper)?,
+        };
+        let buffer = body::to_bytes(response.into_body()).await.map_err(ClientError::Hyper)?;
+        serde_json::from_slice(buffer.as_ref()).map_err(ClientError::Json)
+    }
+}

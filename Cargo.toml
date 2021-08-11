@@ -1,12 +1,13 @@
 [package]
 name = "http"
-version = "0.5.0"
+version = "0.5.1"
 authors = ["merl <merl.001.mia@gmail.com>"]
 edition = "2018"
 
 [dependencies]
 mime = "0.3"
 hyper = { version = "0.14", features = ["client","server","http1","http2","tcp"] }
+hyper-tls = "0.5"
 futures = "0.3"
 tokio = { version = "1.5", features = ["net","rt","rt-multi-thread","time"] }
 tokio-stream = { version = "0.1", features = ["net"] }
