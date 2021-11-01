@@ -1,8 +1,9 @@
 use hyper::{
     Uri,
     header::{CONTENT_LENGTH,CONTENT_TYPE},
-    self,Request,body,Body,
-    client::{self,HttpConnector},
+    self,Request,body,Body,Response,
+    client::{self,HttpConnector,ResponseFuture},
+    
 };
 use mime;
 use serde::{Serialize,de::DeserializeOwned};
@@ -144,6 +145,7 @@ impl<D: DeserializeOwned> Client<D> {
     }
 }
 
+
 use hyper_tls::HttpsConnector;
 
 pub struct TlsClient<D: DeserializeOwned> {
@@ -199,5 +201,107 @@ impl<D: DeserializeOwned> TlsClient<D> {
         };
         let buffer = body::to_bytes(response.into_body()).await.map_err(ClientError::Hyper)?;
         serde_json::from_slice(buffer.as_ref()).map_err(ClientError::Json)
+    }
+}
+
+
+
+pub struct UriClient {
+    cli: client::Client<client::HttpConnector>,
+    uri: Uri,
+}
+impl UriClient {
+    pub fn new(uri: &str) -> Result<UriClient,ClientError> {
+        let uri: Uri = uri.parse().map_err(ClientError::Uri)?;
+        Ok(UriClient {
+            cli: client::Builder::default().build({
+                let http_conn = HttpConnector::new();
+                //http_conn.set_connect_timeout(Some(timeout));
+                http_conn
+            }),
+            uri: uri,
+        })
+    }
+    pub fn get(&self) -> Result<ReplyFuture,ClientError> {
+        Ok(ReplyFuture{
+            inner: ReplyFutureInner::Response(self.cli.request({
+                Request::get(&self.uri)
+                    .body(Body::empty())
+                    .map_err(ClientError::Request)?
+            }))
+        })
+    }
+    pub fn post<S: Serialize>(&self, req: &S) -> Result<ReplyFuture,ClientError> {
+        let json = serde_json::to_string(req).map_err(ClientError::Json)?.into_bytes();
+        Ok(ReplyFuture{
+            inner: ReplyFutureInner::Response(self.cli.request({
+                Request::post(&self.uri)
+                    .header(CONTENT_TYPE,mime::APPLICATION_JSON.as_ref())
+                    .header(CONTENT_LENGTH,json.len() as u64)
+                    .body(Body::from(json))
+                    .map_err(ClientError::Request)?
+            }))
+        })
+    }
+}
+
+use std::pin::Pin;
+use futures::{
+    Future,StreamExt,FutureExt,
+    task::{Poll,Context},
+    stream::Collect,
+};
+use hyper::body::Bytes;
+
+enum ReplyFutureOutput {
+    Response(Response<Body>),
+    Collect(Vec<u8>),
+}
+enum ReplyFutureInner {
+    Response(ResponseFuture),
+    Collect(Collect<Body,Vec<Result<Bytes,hyper::Error>>>),
+}
+impl Future for ReplyFutureInner {
+    type Output = Result<ReplyFutureOutput,ClientError>;
+    
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match self.get_mut() {
+            ReplyFutureInner::Response(fut) => std::pin::Pin::new(fut).poll(cx).map(|res| match res {
+                Ok(rs) => Ok(ReplyFutureOutput::Response(rs)),
+                Err(e) => Err(ClientError::Hyper(e)),
+            }),
+            ReplyFutureInner::Collect(fut) => std::pin::Pin::new(fut).poll(cx).map(|vres| -> Result<ReplyFutureOutput,ClientError> {
+                let mut v = Vec::<u8>::new();
+                for res in vres {
+                    let bts = res.map_err(ClientError::Hyper)?;
+                    v.extend(bts);                    
+                }
+                Ok(ReplyFutureOutput::Collect(v))
+            }),
+        }
+    }
+}
+
+pub struct ReplyFuture {
+    inner: ReplyFutureInner,
+}
+impl Future for ReplyFuture {
+    type Output = Result<Vec<u8>,ClientError>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let mref = Pin::into_inner(self);
+        loop {
+            match mref.inner.poll_unpin(cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                Poll::Ready(Ok(out)) => match out {
+                    ReplyFutureOutput::Response(rsp) => {
+                        let body = rsp.into_body();
+                        mref.inner = ReplyFutureInner::Collect(body.collect());
+                    },
+                    ReplyFutureOutput::Collect(v) => return Poll::Ready(Ok(v)),
+                },
+            }
+        }
     }
 }
