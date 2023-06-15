@@ -69,30 +69,18 @@ impl<R: ApiReply> ReplySender<R> {
     pub fn error(&mut self, se: String) -> Result<(),FrontendError> {
         match self.sender.take() {
             Some(sender) => match self.http_debug {
-                true => sender.send(JsonResponse::internal_error_string(&se)).map_err(|_| FrontendError::BackendSend),
+                true => sender.send(JsonResponse::internal_error(&se)).map_err(|_| FrontendError::BackendSend),
                 false => sender.send(JsonResponse::empty_error()).map_err(|_| FrontendError::BackendSend),
             },
             None => Err(FrontendError::NoSender),
         }
     }
-    pub fn send_result<E: serde::Serialize>(&mut self, rr: Result<R,E>) -> Result<(),FrontendError> {
+    pub fn send_result<E: Debug>(&mut self, rr: Result<R,E>) -> Result<(),FrontendError> {
         match self.sender.take() {
             Some(sender) => {
                 match (self.http_debug, rr) {
                     (_,Ok(r)) => sender.send(JsonResponse::Ok(r)).map_err(|_| FrontendError::BackendSend),
-                    (true,Err(e)) => sender.send(JsonResponse::internal_error(e)).map_err(|_| FrontendError::BackendSend),
-                    (false,Err(_)) => sender.send(JsonResponse::empty_error()).map_err(|_| FrontendError::BackendSend),
-                }
-            },
-            None => Err(FrontendError::NoSender),
-        }
-    }
-    pub fn send_result_debug<E: Debug>(&mut self, rr: Result<R,E>) -> Result<(),FrontendError> {
-        match self.sender.take() {
-            Some(sender) => {
-                match (self.http_debug, rr) {
-                    (_,Ok(r)) => sender.send(JsonResponse::Ok(r)).map_err(|_| FrontendError::BackendSend),
-                    (true,Err(e)) => sender.send(JsonResponse::internal_error_string(&format!("{:?}",e))).map_err(|_| FrontendError::BackendSend),
+                    (true,Err(e)) => sender.send(JsonResponse::internal_error(&format!("{:?}",e))).map_err(|_| FrontendError::BackendSend),
                     (false,Err(_)) => sender.send(JsonResponse::empty_error()).map_err(|_| FrontendError::BackendSend),
                 }
             },

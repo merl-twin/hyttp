@@ -1,8 +1,8 @@
 [package]
 name = "http"
-version = "0.5.3"
+version = "0.5.2"
 authors = ["merl <merl.001.mia@gmail.com>"]
-edition = "2021"
+edition = "2018"
 
 [dependencies]
 mime = "0.3"

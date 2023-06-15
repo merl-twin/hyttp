@@ -52,11 +52,8 @@ impl<R: ApiReply> JsonResponse<R> {
     pub fn ok(value: R) -> JsonResponse<R> {
         JsonResponse::Ok(value)
     }
-    pub fn internal_error_string(er: &str) -> JsonResponse<R> {
-        JsonResponse::InternalServerError(Some(serde_json::Value::String(er.to_string())))
-    }
-    pub fn internal_error<E: Serialize>(e: E) -> JsonResponse<R> {
-        match serde_json::to_value(e) {
+    pub fn internal_error(er: &str) -> JsonResponse<R> {
+        match serde_json::to_value(er) {
             Ok(v) => JsonResponse::InternalServerError(Some(v)),
             Err(e) => {
                 error!("JsonResponse convert error: {:?}",e);
