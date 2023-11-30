@@ -54,6 +54,12 @@ impl<R: ApiReply> ReplySender<R> {
             sender: Some(tx_body),
         },rx_body)
     }
+    pub fn is_alive(&self) -> bool {
+        match &self.sender {
+            Some(sender) => !sender.is_canceled(),
+            None => false,
+        }
+    }
     pub fn send(&mut self, r: JsonResponse<R>) -> Result<(),FrontendError> {
         match self.sender.take() {
             Some(sender) => sender.send(r).map_err(|_| FrontendError::BackendSend),
