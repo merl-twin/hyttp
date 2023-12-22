@@ -1,8 +1,19 @@
 [package]
-name = "http"
-version = "0.5.3"
+name = "hyttp"
+version = "0.6.0"
 authors = ["merl <merl.001.mia@gmail.com>"]
-edition = "2018"
+edition = "2021"
+license = "MIT"
+readme = "README.md"
+description = "Hyper wrapper"
+
+repository = "https://github.com/merl-twin/hyttp"
+homepage = "https://github.com/merl-twin/hyttp"
+
+include = [
+    "**/*.rs",
+    "Cargo.toml",
+]
 
 [dependencies]
 mime = "0.3"
